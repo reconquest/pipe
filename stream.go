@@ -13,7 +13,7 @@ type (
 
 const (
 	StreamModeRead  StreamMode = 0xA
-	StreamModeWrite            = 0xF
+	StreamModeWrite StreamMode = 0xF
 
 	StreamStd = "std"
 )
@@ -30,7 +30,7 @@ func (mode StreamMode) String() string {
 
 type Stream struct {
 	*sync.Mutex
-	id      int
+	flowID  int
 	Reader  io.ReadCloser
 	Writer  io.WriteCloser
 	scanner *bufio.Scanner
@@ -57,7 +57,7 @@ func (stream *Stream) Scanner() *bufio.Scanner {
 	return stream.scanner
 }
 
-func newStream(name string) *Stream {
+func newStream(name string, flowID int) *Stream {
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		panic(err)
@@ -65,7 +65,7 @@ func newStream(name string) *Stream {
 
 	stream := &Stream{
 		name:   name,
-		id:     getStreamID(),
+		flowID: flowID,
 		Reader: reader,
 		Mutex:  &sync.Mutex{},
 		Writer: writer,

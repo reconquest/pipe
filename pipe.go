@@ -3,31 +3,33 @@ package pipe
 import (
 	"io/ioutil"
 	"log"
+	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 )
 
 var (
-	debugPipeLinkedList = false
+	debugPipeLinkedList = os.Getenv("DEBUG_PIPE_LINKED_LIST") == "1"
 )
 
 type Flower func(Flow)
 
-func Pipe(flowers ...Flower) {
-	routines := &sync.WaitGroup{}
-
-	pipeline := &pipeline{
-		mutex: &sync.Mutex{},
+func Pipe(flowers ...Flower) *Pipeline {
+	pipeline := &Pipeline{
+		mutex:    &sync.Mutex{},
+		routines: &sync.WaitGroup{},
 	}
 
 	tail := &Flow{pipeline: pipeline}
 
 	flows := []Flow{}
-	for _ = range flowers {
+	for range flowers {
 		flow := Flow{
-			id:       getFlowID(),
+			id:       int(atomic.AddInt64(&pipeline.flowID, 1)),
 			streams:  map[string]*Stream{},
 			pipeline: pipeline,
+			process:  &sync.WaitGroup{},
 		}
 
 		// dereference the tail
@@ -40,6 +42,8 @@ func Pipe(flowers ...Flower) {
 
 		// set tail as reference to current element
 		tail = &flow
+
+		flow.process.Add(1)
 
 		flows = append(flows, flow)
 	}
@@ -60,19 +64,23 @@ func Pipe(flowers ...Flower) {
 		}
 	}
 
+	pipeline.tail = flows[len(flows)-1]
+
 	for i, flower := range flowers {
 		flow := flows[i]
 
-		routines.Add(1)
+		pipeline.routines.Add(1)
 		go func(flower Flower) {
-			defer routines.Done()
+			defer pipeline.routines.Done()
+			defer flow.process.Done()
+
 			flower(flow)
 
 			flow.close()
 		}(flower)
 	}
 
-	routines.Wait()
+	return pipeline
 }
 
 func EachLine(stream string, flower func(Flow, string)) Flower {
@@ -88,15 +96,15 @@ func EachLine(stream string, flower func(Flow, string)) Flower {
 	}
 }
 
-func Buffered(stream string, flower func(Flow, []byte)) Flower {
+func Buffered(stream string, flower func(Flow, string)) Flower {
 	return func(flow Flow) {
-		contents, err := ioutil.ReadAll(flow)
+		contents, err := ioutil.ReadAll(flow.In(stream))
 		if err != nil {
 			log.Println(err)
 			return
 		}
 
-		flower(flow, contents)
+		flower(flow, string(contents))
 	}
 }
 
@@ -112,6 +120,10 @@ func Exec(name string, args ...string) Flower {
 			panic(err)
 		}
 	}
+}
+
+func Shell(cmdline string) Flower {
+	return Exec(os.Getenv("SHELL"), "-c", cmdline)
 }
 
 func DumpIn() Flower {

@@ -2,6 +2,7 @@ package pipe
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"sync"
@@ -13,43 +14,44 @@ var (
 	debugPipelineStream = os.Getenv("DEBUG_PIPELINE_STREAM") == "1"
 )
 
-type pipeline struct {
+type Pipeline struct {
 	mutex *sync.Mutex
+
+	tail     Flow
+	routines *sync.WaitGroup
+
+	flowID int64
+}
+
+func (pipeline *Pipeline) Wait() *Pipeline {
+	pipeline.routines.Wait()
+	return pipeline
 }
 
 var (
 	nopStream = &Stream{
 		name:   "closed",
-		id:     -1,
+		flowID: 0,
 		Reader: nopio.NopReadCloser{},
 		Writer: nopio.NopWriteCloser{},
 	}
 )
 
-func (pipeline *pipeline) stream(flow *Flow, name string, mode StreamMode) *Stream {
+func (pipeline *Pipeline) stream(flow *Flow, name string, mode StreamMode) *Stream {
 	pipeline.mutex.Lock()
 	defer pipeline.mutex.Unlock()
 
 	var stream *Stream
-	var ok bool
 	switch mode {
 	case StreamModeRead:
 		if flow.prev.streams == nil {
 			return nopStream
 		}
 
-		stream, ok = flow.prev.streams[name]
-		if !ok {
-			stream = newStream(name)
-			flow.prev.streams[name] = stream
-		}
+		stream = flow.prev.stream(name)
 
 	case StreamModeWrite:
-		stream, ok = flow.streams[name]
-		if !ok {
-			stream = newStream(name)
-			flow.streams[name] = stream
-		}
+		stream = flow.stream(name)
 
 	default:
 		panic(fmt.Errorf("unexpected stream mode: %v", mode))
@@ -59,11 +61,24 @@ func (pipeline *pipeline) stream(flow *Flow, name string, mode StreamMode) *Stre
 		log.Printf(
 			"flow.id: %v, stream: %d %p, mode: %s",
 			flow.id,
-			stream.id,
+			stream.flowID,
 			stream,
 			mode,
 		)
 	}
 
 	return stream
+}
+
+func (pipeline *Pipeline) Stream(name string) *Stream {
+	return pipeline.tail.stream(name)
+}
+
+func (pipeline *Pipeline) Out(name string) string {
+	contents, err := ioutil.ReadAll(pipeline.Stream(name))
+	if err != nil {
+		panic(err)
+	}
+
+	return string(contents)
 }

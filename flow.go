@@ -1,9 +1,11 @@
 package pipe
 
 import "io"
+import "io/ioutil"
+import "sync"
 
 type Flow struct {
-	pipeline *pipeline
+	pipeline *Pipeline
 
 	prev *Flow
 	next *Flow
@@ -14,6 +16,12 @@ type Flow struct {
 
 	io.Reader
 	io.Writer
+
+	process *sync.WaitGroup
+}
+
+func (flow *Flow) Wait() {
+	flow.process.Wait()
 }
 
 func (flow Flow) Read(buffer []byte) (int, error) {
@@ -40,6 +48,16 @@ func (flow *Flow) ID() int {
 	return flow.id
 }
 
+func (flow *Flow) stream(name string) *Stream {
+	stream, ok := flow.streams[name]
+	if !ok {
+		stream = newStream(name, flow.ID())
+		flow.streams[name] = stream
+	}
+
+	return stream
+}
+
 func (flow *Flow) Scan(name string) (string, bool) {
 	scanner := flow.In(name).Scanner()
 	scanned := scanner.Scan()
@@ -61,4 +79,13 @@ func (flow *Flow) close() {
 			panic(err)
 		}
 	}
+}
+
+func (flow *Flow) ReadAll(name string) string {
+	contents, err := ioutil.ReadAll(flow.In(name))
+	if err != nil {
+		panic(err)
+	}
+
+	return string(contents)
 }
